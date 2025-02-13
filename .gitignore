@@ -1,0 +1,15 @@
+*.un~
+
+*~
+
+a.out
+
+test.db
+banco
+
+.rspec
+
+Gemfile
+Gemfile.lock
+
+spec/spec_helper.rb
