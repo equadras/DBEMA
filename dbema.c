@@ -19,7 +19,7 @@ typedef struct {
     char email[COLUMN_EMAIL_SIZE+1];
 } Row;
 
-
+// my page
 typedef struct {
     int file_descriptor;
     uint32_t file_length;
@@ -31,6 +31,13 @@ typedef struct {
     uint32_t num_rows;
     Pager* pager; 
 } Table;
+
+//my cursor
+typedef struct {
+    Table* table;
+    uint32_t row_num;
+    bool is_end;
+} Cursor;
 
 const uint32_t ID_SIZE          = size_of_attribute(Row, id);
 const uint32_t USERNAME_SIZE    = size_of_attribute(Row, username);
@@ -103,10 +110,12 @@ void read_input(InputBuffer* input_buffer) {
     ssize_t bytes_read =
         getline(&(input_buffer->buffer), &(input_buffer->buffer_length), stdin);
 
+
     if (bytes_read <= 0) {
         printf("Error reading input\n");
         exit(EXIT_FAILURE);
     }
+
     //ignore the \n
     input_buffer->input_length = bytes_read - 1;
     input_buffer->buffer[bytes_read - 1] = 0;
@@ -120,6 +129,7 @@ Pager* pager_open(const char* filename){
             S_IWUSR |     // User write permission
             S_IRUSR   // User read permission
             );
+
     if (fd == -1){
         printf("Unable to open filen\n");
         exit(EXIT_FAILURE);
@@ -134,6 +144,25 @@ Pager* pager_open(const char* filename){
         pager->pages[i] = NULL;
     }
     return pager;
+}
+
+Cursor* table_start(Table* table){
+    Cursor* cursor = malloc(sizeof(Cursor));
+    cursor->table = table;
+    cursor->row_num = 0;
+    if (table-> num_rows == 0) cursor->is_end = true;
+    else cursor->is_end = false;
+
+    return cursor;
+}
+
+Cursor* table_end(Table* table){
+    Cursor* cursor = malloc(sizeof(cursor));
+    cursor->table = table;
+    cursor->row_num = table->num_rows;
+    cursor->is_end = true;
+
+    return cursor;
 }
 
 Table* db_open(const char* filename){
@@ -232,15 +261,28 @@ void* get_page(Pager* pager, uint32_t page_num){
     return pager->pages[page_num];
 }
 
-//find row
-void* row_slot(Table* table, uint32_t row_num) {
+//find row - now returns a cursor
+void* cursor_value (Cursor* cursor) {
+    uint32_t row_num = cursor->row_num;
     uint32_t page_num = row_num / ROWS_PER_PAGE;
 
-    void* page = get_page(table->pager, page_num);
+    void* page = get_page(cursor->table->pager, page_num);
+
     uint32_t row_offset = row_num % ROWS_PER_PAGE;
     uint32_t byte_offset = row_offset * ROW_SIZE;
+
     return page + byte_offset;
 }
+
+void cursor_step(Cursor* cursor){
+    cursor->row_num += 1;
+    //check if the step is bigger than the table
+    if (cursor-> row_num >= cursor->table->num_rows){
+        cursor->is_end = true;
+    }
+}
+
+
 
 void serialize_row(Row* source, void* destination) {
     memcpy(destination + ID_OFFSET, &(source->id), ID_SIZE);
@@ -304,21 +346,35 @@ PrepareResult prepare_statement(InputBuffer* input_buffer, Statement* statement)
 
 
 ExecuteResult execute_insert(Statement* statement, Table* table) {
+    //wen inserting, open a cursor at the end, write at that location and then close cursor
+
     if (table->num_rows >= TABLE_MAX_ROWS) {
         return EXECUTE_TABLE_FULL;
     }
     Row* row_to_insert = &(statement->row_to_insert);
-    serialize_row(row_to_insert, row_slot(table, table->num_rows));
+    Cursor* cursor = table_end(table);
+
+    serialize_row(row_to_insert, cursor_value(cursor));
+
     table->num_rows += 1;
+
+    free(cursor);
+
     return EXECUTE_SUCCESS;
 }
 
 ExecuteResult execute_select(Statement* statement, Table* table) {
+    //now we are going to use the cursor to print, start a cursor at the start and step till the end
+    Cursor* cursor = table_start(table);
     Row row;
-    for (uint32_t i = 0; i < table->num_rows; i++) {
-        deserialize_row(row_slot(table, i), &row);
-        print_row(&row);
+
+    while(cursor->is_end != true){
+    deserialize_row(cursor_value(cursor), &row);
+    print_row(&row);
+    cursor_step(cursor);
     }
+    free(cursor);
+
     return EXECUTE_SUCCESS;
 }
 
